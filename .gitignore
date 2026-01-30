@@ -1,0 +1,24 @@
+# Virtual environments
+venv/
+env/
+faceenv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+dist/
+build/
+
+# Env files
+.env
+
+# Media / temp
+*.mp4
+*.avi
+temp_stream/
+
+# OS
+.DS_Store
