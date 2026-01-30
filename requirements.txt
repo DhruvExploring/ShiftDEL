@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 python-multipart
-# face_recognition
-# opencv-python
+face_recognition
+opencv-python
 cryptography
 numpy
