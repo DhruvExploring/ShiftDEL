@@ -7,7 +7,7 @@ import uuid
 from cryptography.fernet import Fernet
 import numpy as np
 import cv2
-from backend.services.face_logic import verify_face, get_known_encoding, FACE_LIB_AVAILABLE
+from backend.services.face_logic import verify_face, set_reference_image, FACE_LIB_AVAILABLE
 
 # A fixed master key for encrypting the vault's metadata key. 
 # In a real scenario, this might be derived from a password or hardware token.
@@ -51,22 +51,10 @@ def create_vault(target_dir, reference_img_bytes, secret_files):
     os.makedirs(vault_path)
 
     # 1. Extract Face Encodings from Reference
-    # We need to temporarily save it to reuse face_logic function or modify face_logic
-    # Let's decode manually to get encoding
-    from backend.services.face_logic import fc
-    
-    nparr = np.frombuffer(reference_img_bytes, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
-    if FACE_LIB_AVAILABLE:
-        encodings = fc.face_encodings(rgb)
-        if len(encodings) == 0:
-             shutil.rmtree(vault_path)
-             return False, "No face found in reference photo."
-        ref_encoding = encodings[0].tolist() # JSON serializable
-    else:
-        ref_encoding = "MOCK_ENCODING_LIST"
+    ref_encoding, error = set_reference_image(reference_img_bytes)
+    if error:
+        shutil.rmtree(vault_path)
+        return False, error
 
     # 2. Generate Vault Key (AES)
     vault_key = Fernet.generate_key()
@@ -127,25 +115,7 @@ def unlock_vault(source_dir, live_img_bytes):
         return False, "Vault is DESTROYED due to excessive failed attempts."
 
     # Verify Face
-    from backend.services.face_logic import fc
-    
-    nparr = np.frombuffer(live_img_bytes, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
-    match = False
-    
-    if FACE_LIB_AVAILABLE:
-        encodings = fc.face_encodings(rgb)
-        if len(encodings) > 0:
-            known_enc = np.array(metadata["reference_encoding"])
-            # Compare
-            results = fc.compare_faces([known_enc], encodings[0], tolerance=0.5) # slightly stricter for vault
-            if results[0]:
-                match = True
-    else:
-        # Mock logic
-        match = True
+    match, error_msg = verify_face(live_img_bytes, metadata["reference_encoding"])
 
     if not match:
         # Increment failure

@@ -2,7 +2,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Body, Form
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List
-from backend.services.face_logic import verify_face, set_reference_image
+
 from backend.services.storage_manager import create_vault, unlock_vault
 from backend.services.system_tools import select_folder_dialog
 import json
