@@ -8,7 +8,7 @@ const Home = () => (
   <div className="container-center">
     <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
       <h1 className="title-gradient" style={{ fontSize: '3.5rem', marginBottom: '1rem' }}>
-        FaceLock
+        ShiftDEL
       </h1>
       <p className="subtitle" style={{ fontSize: '1.25rem' }}>Secure Biometric Data Transmission</p>
     </div>
