@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Folder, FolderOpen, File, ChevronRight, X, Home, ArrowLeft } from 'lucide-react';
+import { Folder, FolderOpen, File, ChevronRight, X, Home, ArrowLeft, HardDrive } from 'lucide-react';
 
 const FileBrowser = ({ isOpen, onClose, onSelect, initialPath = '' }) => {
     const [currentPath, setCurrentPath] = useState(initialPath);
@@ -19,7 +19,8 @@ const FileBrowser = ({ isOpen, onClose, onSelect, initialPath = '' }) => {
         setLoading(true);
         setError('');
         try {
-            const res = await api.get(`/system/list-dir?path=${encodeURIComponent(path)}`);
+            const url = path ? `/system/list-dir?path=${encodeURIComponent(path)}` : '/system/list-dir';
+            const res = await api.get(url);
             if (res.data.error) {
                 setError(res.data.error);
             } else {
@@ -65,7 +66,7 @@ const FileBrowser = ({ isOpen, onClose, onSelect, initialPath = '' }) => {
                     <button onClick={handleHome} title="Home"><Home size={16} /></button>
                     <button
                         onClick={() => fetchDir(contents.parent_path)}
-                        disabled={!contents.parent_path || contents.parent_path === contents.current_path}
+                        disabled={!contents.parent_path}
                         title="Back"
                     >
                         <ArrowLeft size={16} />
@@ -88,7 +89,9 @@ const FileBrowser = ({ isOpen, onClose, onSelect, initialPath = '' }) => {
                                     className={`browser-item ${item.is_dir ? 'is-folder' : 'is-file'}`}
                                     onClick={() => item.is_dir && fetchDir(item.path)}
                                 >
-                                    {item.is_dir ? <Folder size={16} color="#fbbf24" /> : <File size={16} color="#94a3b8" />}
+                                    {item.is_drive ? <HardDrive size={16} color="#38bdf8" /> :
+                                        item.is_dir ? <Folder size={16} color="#fbbf24" /> :
+                                            <File size={16} color="#94a3b8" />}
                                     <span className="item-name">{item.name}</span>
                                     {item.is_dir && <ChevronRight size={14} style={{ marginLeft: 'auto', opacity: 0.5 }} />}
                                 </div>
