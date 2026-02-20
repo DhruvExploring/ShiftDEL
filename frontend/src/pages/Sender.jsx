@@ -36,9 +36,7 @@ const Sender = () => {
         });
 
         try {
-            const res = await api.post('/vault/create', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            const res = await api.post('/vault/create', formData);
             setStatus({ type: 'success', msg: res.data.message });
         } catch (err) {
             console.error(err);
