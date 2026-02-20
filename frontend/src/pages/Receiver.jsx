@@ -2,7 +2,8 @@ import React, { useRef, useState, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import api from '../api';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldCheck, Unlock, AlertTriangle, RefreshCw, FolderOpen, Play, FileText, Image as ImageIcon, Lock, FileVideo } from 'lucide-react';
+import { ShieldCheck, Unlock, AlertTriangle, RefreshCw, FolderOpen, Play, FileText, Image as ImageIcon, Lock, FileVideo, Search } from 'lucide-react';
+import FileBrowser from '../components/FileBrowser';
 
 const Receiver = () => {
     const webcamRef = useRef(null);
@@ -11,6 +12,7 @@ const Receiver = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [failCount, setFailCount] = useState(0);
+    const [isBrowserOpen, setIsBrowserOpen] = useState(false);
 
     const captureAndUnlock = useCallback(async () => {
         if (!webcamRef.current || !sourceDir) {
@@ -110,39 +112,27 @@ const Receiver = () => {
                             <input
                                 type="text"
                                 value={sourceDir}
-                                onChange={(e) => setSourceDir(e.target.value)}
+                                onClick={() => !decryptedFiles.length && setIsBrowserOpen(true)}
                                 placeholder="Enter or select a directory..."
                                 disabled={decryptedFiles.length > 0}
                                 className="input-field"
                                 style={{ background: '#0f172a' }}
-                                onClick={async () => {
-                                    if (decryptedFiles.length > 0) return;
-                                    try {
-                                        const res = await api.post('/system/browse');
-                                        if (res.data.path) setSourceDir(res.data.path);
-                                    } catch (e) { console.error("Browse failed:", e); }
-                                }}
                             />
                             <button
-                                onClick={async () => {
-                                    try {
-                                        const res = await api.post('/system/browse');
-                                        if (res.data.path) setSourceDir(res.data.path);
-                                        else if (res.data.cancelled) { }
-                                        else {
-                                            alert("Could not open system dialog. Please enter the path manually.");
-                                        }
-                                    } catch (e) {
-                                        console.error("Browse failed:", e);
-                                        alert("Could not open system dialog. Please enter the path manually.");
-                                    }
-                                }}
+                                onClick={() => setIsBrowserOpen(true)}
                                 className="btn-small"
-                                style={{ marginTop: '0.5rem', background: '#334155', width: '100%' }}
+                                style={{ marginTop: '0.5rem', background: '#334155', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
                                 disabled={decryptedFiles.length > 0}
                             >
-                                Browse...
+                                <Search size={14} /> Browse Server Directories...
                             </button>
+
+                            <FileBrowser
+                                isOpen={isBrowserOpen}
+                                onClose={() => setIsBrowserOpen(false)}
+                                onSelect={(path) => setSourceDir(path)}
+                                initialPath={sourceDir}
+                            />
 
                             {!decryptedFiles.length && (
                                 <button

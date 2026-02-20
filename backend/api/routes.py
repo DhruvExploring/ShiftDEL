@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import List
 
 from backend.services.storage_manager import create_vault, unlock_vault
-from backend.services.system_tools import select_folder_dialog
+from backend.services.system_tools import select_folder_dialog, list_directory_contents
 import json
 import os
 
@@ -19,10 +19,21 @@ class BrowseResponse(BaseModel):
 
 @router.post("/system/browse")
 async def browse_folder():
+    """Native dialog (only works if local server)"""
     path = select_folder_dialog()
     if not path:
         return {"cancelled": True}
     return {"path": path}
+
+@router.get("/system/list-dir")
+async def list_dir(path: str = None):
+    """Remote-friendly listing of server directory"""
+    return list_directory_contents(path)
+
+@router.get("/system/get-home")
+async def get_home():
+    """Get the server's home directory path"""
+    return {"home": os.path.expanduser("~")}
 
 
 @router.post("/vault/create")

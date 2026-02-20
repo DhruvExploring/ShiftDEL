@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import api from '../api';
 import { motion } from 'framer-motion';
-import { Upload, Lock, CheckCircle, AlertCircle, Folder, FileVideo, FileText } from 'lucide-react';
+import { Upload, Lock, CheckCircle, AlertCircle, Folder, FileVideo, FileText, Search } from 'lucide-react';
+import FileBrowser from '../components/FileBrowser';
 
 const Sender = () => {
     const [faceFile, setFaceFile] = useState(null);
     const [targetDir, setTargetDir] = useState('');
     const [secretText, setSecretText] = useState('');
     const [secretFiles, setSecretFiles] = useState([]);
+    const [isBrowserOpen, setIsBrowserOpen] = useState(false);
 
     const [status, setStatus] = useState({ type: '', msg: '' });
     const [loading, setLoading] = useState(false);
@@ -69,40 +71,27 @@ const Sender = () => {
                             <input
                                 type="text"
                                 value={targetDir}
-                                onChange={(e) => setTargetDir(e.target.value)}
+                                onClick={() => setIsBrowserOpen(true)}
                                 placeholder="Enter or select a directory..."
                                 className="input-field"
                                 style={{ background: '#0f172a' }}
-                                onClick={async () => {
-                                    try {
-                                        const res = await api.post('/system/browse');
-                                        if (res.data.path) setTargetDir(res.data.path);
-                                    } catch (e) {
-                                        console.error("Browse failed:", e);
-                                    }
-                                }}
                             />
                             <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.25rem' }}>path to external drive (you can type manually if browse fails)</p>
                             <button
-                                onClick={async () => {
-                                    try {
-                                        const res = await api.post('/system/browse');
-                                        if (res.data.path) setTargetDir(res.data.path);
-                                        else if (res.data.cancelled) { }
-                                        else {
-                                            alert("Could not open system dialog. Please enter the path manually.");
-                                        }
-                                    } catch (e) {
-                                        console.error("Browse failed:", e);
-                                        alert("Could not open system dialog. Please enter the path manually.");
-                                    }
-                                }}
+                                onClick={() => setIsBrowserOpen(true)}
                                 className="btn-small"
-                                style={{ marginTop: '0.5rem', background: '#334155' }}
+                                style={{ marginTop: '0.5rem', background: '#334155', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                             >
-                                Browse System...
+                                <Search size={14} /> Browse Server Directories...
                             </button>
                         </div>
+
+                        <FileBrowser
+                            isOpen={isBrowserOpen}
+                            onClose={() => setIsBrowserOpen(false)}
+                            onSelect={(path) => setTargetDir(path)}
+                            initialPath={targetDir}
+                        />
 
                         {/* 2. Face Enrollment */}
                         <div className="form-group">
