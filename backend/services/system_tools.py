@@ -20,5 +20,6 @@ def select_folder_dialog():
         # User cancelled
         return None
     except Exception as e:
-        print(f"Error opening dialog: {e}")
+        print(f"CRITICAL ERROR: Could not open native folder dialog: {e}")
+        print("This often happens when the server is hosted remotely or doesn't have access to the display.")
         return None

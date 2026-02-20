@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { motion } from 'framer-motion';
 import { Upload, Lock, CheckCircle, AlertCircle, Folder, FileVideo, FileText } from 'lucide-react';
 
@@ -36,7 +36,7 @@ const Sender = () => {
         });
 
         try {
-            const res = await axios.post('http://localhost:8000/api/vault/create', formData, {
+            const res = await api.post('/vault/create', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             setStatus({ type: 'success', msg: res.data.message });
@@ -72,27 +72,31 @@ const Sender = () => {
                                 type="text"
                                 value={targetDir}
                                 onChange={(e) => setTargetDir(e.target.value)}
-                                placeholder="Select a directory..."
+                                placeholder="Enter or select a directory..."
                                 className="input-field"
-                                readOnly
-                                style={{ cursor: 'pointer', background: '#0f172a' }}
+                                style={{ background: '#0f172a' }}
                                 onClick={async () => {
                                     try {
-                                        const res = await axios.post('http://localhost:8000/api/system/browse');
+                                        const res = await api.post('/system/browse');
                                         if (res.data.path) setTargetDir(res.data.path);
                                     } catch (e) {
-                                        console.error(e);
+                                        console.error("Browse failed:", e);
                                     }
                                 }}
                             />
-                            <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.25rem' }}>path to external drive</p>
+                            <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.25rem' }}>path to external drive (you can type manually if browse fails)</p>
                             <button
                                 onClick={async () => {
                                     try {
-                                        const res = await axios.post('http://localhost:8000/api/system/browse');
+                                        const res = await api.post('/system/browse');
                                         if (res.data.path) setTargetDir(res.data.path);
+                                        else if (res.data.cancelled) { }
+                                        else {
+                                            alert("Could not open system dialog. Please enter the path manually.");
+                                        }
                                     } catch (e) {
-                                        console.error(e);
+                                        console.error("Browse failed:", e);
+                                        alert("Could not open system dialog. Please enter the path manually.");
                                     }
                                 }}
                                 className="btn-small"

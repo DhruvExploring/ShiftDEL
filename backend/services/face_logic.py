@@ -39,7 +39,7 @@ def verify_face(live_img_bytes, reference_encoding):
     Returns: (match_boolean, error_message)
     """
     if not FACE_LIB_AVAILABLE:
-        return True, None # Always match in mock mode
+        return False, "Biometric libraries unavailable. Check server logs."
 
     if not reference_encoding:
         return False, "No reference encoding provided."

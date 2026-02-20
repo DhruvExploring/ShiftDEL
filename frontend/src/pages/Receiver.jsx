@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback } from 'react';
 import Webcam from 'react-webcam';
-import axios from 'axios';
+import api from '../api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShieldCheck, Unlock, AlertTriangle, RefreshCw, FolderOpen, Play, FileText, Image as ImageIcon, Lock, FileVideo } from 'lucide-react';
 
@@ -34,7 +34,7 @@ const Receiver = () => {
         formData.append('source_dir', sourceDir);
 
         try {
-            const res = await axios.post('http://localhost:8000/api/vault/unlock', formData);
+            const res = await api.post('/vault/unlock', formData);
             if (res.data.success) {
                 setDecryptedFiles(res.data.files);
                 setFailCount(0);
@@ -111,25 +111,31 @@ const Receiver = () => {
                                 type="text"
                                 value={sourceDir}
                                 onChange={(e) => setSourceDir(e.target.value)}
-                                placeholder="Select a directory..."
+                                placeholder="Enter or select a directory..."
                                 disabled={decryptedFiles.length > 0}
                                 className="input-field"
-                                readOnly
-                                style={{ cursor: 'pointer', background: '#0f172a' }}
+                                style={{ background: '#0f172a' }}
                                 onClick={async () => {
                                     if (decryptedFiles.length > 0) return;
                                     try {
-                                        const res = await axios.post('http://localhost:8000/api/system/browse');
+                                        const res = await api.post('/system/browse');
                                         if (res.data.path) setSourceDir(res.data.path);
-                                    } catch (e) { console.error(e); }
+                                    } catch (e) { console.error("Browse failed:", e); }
                                 }}
                             />
                             <button
                                 onClick={async () => {
                                     try {
-                                        const res = await axios.post('http://localhost:8000/api/system/browse');
+                                        const res = await api.post('/system/browse');
                                         if (res.data.path) setSourceDir(res.data.path);
-                                    } catch (e) { console.error(e); }
+                                        else if (res.data.cancelled) { }
+                                        else {
+                                            alert("Could not open system dialog. Please enter the path manually.");
+                                        }
+                                    } catch (e) {
+                                        console.error("Browse failed:", e);
+                                        alert("Could not open system dialog. Please enter the path manually.");
+                                    }
                                 }}
                                 className="btn-small"
                                 style={{ marginTop: '0.5rem', background: '#334155', width: '100%' }}
