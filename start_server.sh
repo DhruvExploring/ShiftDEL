@@ -44,12 +44,17 @@ if [ ! -d "frontend/node_modules" ]; then
     cd frontend && npm install && cd ..
 fi
 
-# 4. Start Backend Server
-echo "[*] Starting FastAPI Backend on Port $BACKEND_PORT..."
-python3 -m uvicorn backend.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload &
+# 4. Start Internal Backend Server
+echo "[*] Starting Internal Backend on Port 8080..."
+python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8080 --reload &
 BACKEND_PID=$!
 
-# 5. Start Frontend Server
+# 5. Start Security Relay Server
+echo "[*] Starting Security Relay on Port $BACKEND_PORT..."
+python3 -m uvicorn relay.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload &
+RELAY_PID=$!
+
+# 6. Start Vite Frontend
 echo "[*] Starting Vite Frontend..."
 cd frontend
 npm run dev -- --port $FRONTEND_PORT &
@@ -58,10 +63,11 @@ cd ..
 
 echo "==========================================="
 echo "   Servers Running!"
-echo "   Backend:  http://localhost:$BACKEND_PORT"
+echo "   Relay:    http://localhost:$BACKEND_PORT (Public Gateway)"
+echo "   Internal: http://localhost:8080 (Isolated)"
 echo "   Frontend: http://localhost:$FRONTEND_PORT"
-echo "   Press Ctrl+C to stop both."
+echo "   Press Ctrl+C to stop all."
 echo "==========================================="
 
 # Wait for processes
-wait $BACKEND_PID $FRONTEND_PID
+wait $BACKEND_PID $RELAY_PID $FRONTEND_PID
