@@ -71,6 +71,7 @@ const Sender = () => {
                             <input
                                 type="text"
                                 value={targetDir}
+                                onChange={(e) => setTargetDir(e.target.value)}
                                 onClick={() => setIsBrowserOpen(true)}
                                 placeholder="Enter or select a directory..."
                                 className="input-field"

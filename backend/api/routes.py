@@ -55,7 +55,8 @@ async def create_vault_endpoint(
     if secret_text:
         secret_payload.append({
             "filename": "message.txt",
-            "content": secret_text.encode()
+            "content": secret_text.encode(),
+            "content_type": "text/plain"
         })
         
     if files:
@@ -63,14 +64,15 @@ async def create_vault_endpoint(
             content = await f.read()
             secret_payload.append({
                 "filename": f.filename,
-                "content": content
+                "content": content,
+                "content_type": f.content_type or "application/octet-stream"
             })
             
     if not secret_payload:
          raise HTTPException(status_code=400, detail="No content to encrypt.")
 
     # 3. Create Vault
-    success, msg = create_vault(target_dir, ref_bytes, secret_payload)
+    success, msg = await create_vault(target_dir, ref_bytes, secret_payload)
     
     if not success:
         raise HTTPException(status_code=400, detail=msg)
@@ -87,7 +89,7 @@ async def unlock_vault_endpoint(
     """
     face_bytes = await face_image.read()
     
-    success, result = unlock_vault(source_dir, face_bytes)
+    success, result = await unlock_vault(source_dir, face_bytes)
     
     if not success:
         # result is error message

@@ -13,6 +13,38 @@ const Receiver = () => {
     const [error, setError] = useState('');
     const [failCount, setFailCount] = useState(0);
     const [isBrowserOpen, setIsBrowserOpen] = useState(false);
+    const objectUrlsRef = useRef([]);
+
+    // Helper to convert base64 to Blob URL
+    const createSafeUrl = (base64, mimeType) => {
+        const byteCharacters = atob(base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        objectUrlsRef.current.push(url);
+        return url;
+    };
+
+    // Helper for UTF-8 safe base64 decoding
+    const decodeBase64UTF8 = (base64) => {
+        return decodeURIComponent(atob(base64).split('').map(function (c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+    };
+
+    // Cleanup object URLs on unmount or before new results
+    const cleanupUrls = () => {
+        objectUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+        objectUrlsRef.current = [];
+    };
+
+    React.useEffect(() => {
+        return cleanupUrls;
+    }, []);
 
     const captureAndUnlock = useCallback(async () => {
         if (!webcamRef.current || !sourceDir) {
@@ -22,6 +54,7 @@ const Receiver = () => {
 
         setLoading(true);
         setError('');
+        cleanupUrls();
         setDecryptedFiles([]);
 
         const imageSrc = webcamRef.current.getScreenshot();
@@ -38,13 +71,26 @@ const Receiver = () => {
         try {
             const res = await api.post('/vault/unlock', formData);
             if (res.data.success) {
-                setDecryptedFiles(res.data.files);
+                // Pre-calculate URLs
+                const filesWithUrls = res.data.files.map(f => ({
+                    ...f,
+                    blobUrl: createSafeUrl(f.content, f.type)
+                }));
+                setDecryptedFiles(filesWithUrls);
                 setFailCount(0);
             }
         } catch (err) {
             console.error(err);
-            setFailCount(prev => prev + 1);
-            setError(err.response?.data?.detail || 'Verification failed.');
+            const detail = err.response?.data?.detail || 'Verification failed.';
+
+            // Extract fail count if returned by backend (via relay)
+            if (err.response?.status === 403 && detail.includes("VAULT DESTROYED")) {
+                setFailCount(3);
+                setError("VAULT DESTROYED: Maximum attempts exceeded.");
+            } else {
+                setFailCount(prev => prev + 1);
+                setError(detail);
+            }
         } finally {
             setLoading(false);
         }
@@ -56,13 +102,13 @@ const Receiver = () => {
                 <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="glass-panel" style={{ textAlign: 'center', borderColor: '#ef4444' }}>
                     <AlertTriangle size={80} color="#ef4444" style={{ margin: '0 auto' }} />
                     <h1 style={{ color: '#f87171', fontSize: '3rem', margin: '1rem 0' }}>VAULT DESTROYED</h1>
-                    <p style={{ color: '#fca5a5' }}>Security protocol initiated. Secure files have been overwritten and deleted.</p>
+                    <p style={{ color: '#fca5a5' }}>Security protocol initiated. Secure files have been overwritten and deleted from the source drive.</p>
                     <button
                         onClick={() => window.location.reload()}
                         className="btn-primary"
                         style={{ marginTop: '2rem', background: '#7f1d1d' }}
                     >
-                        Reset System
+                        Reset Application
                     </button>
                 </motion.div>
             </div>
@@ -112,6 +158,7 @@ const Receiver = () => {
                             <input
                                 type="text"
                                 value={sourceDir}
+                                onChange={(e) => setSourceDir(e.target.value)}
                                 onClick={() => !decryptedFiles.length && setIsBrowserOpen(true)}
                                 placeholder="Enter or select a directory..."
                                 disabled={decryptedFiles.length > 0}
@@ -148,7 +195,7 @@ const Receiver = () => {
 
                             {error && (
                                 <div className="alert alert-error">
-                                    {error} ({failCount}/3)
+                                    {error}
                                 </div>
                             )}
                         </div>
@@ -182,19 +229,41 @@ const Receiver = () => {
 
                                             {file.type.startsWith('video') && (
                                                 <video controls style={{ width: '100%', borderRadius: '0.25rem', background: 'black' }}>
-                                                    <source src={file.url || `data:${file.type};base64,${file.content}`} type={file.type} />
+                                                    <source src={file.blobUrl} type={file.type} />
                                                     Your browser does not support video tag.
                                                 </video>
                                             )}
 
                                             {file.type.startsWith('image') && (
-                                                <img src={`data:${file.type};base64,${file.content}`} alt="Decrypted" style={{ width: '100%', borderRadius: '0.25rem' }} />
+                                                <img src={file.blobUrl} alt="Decrypted" style={{ width: '100%', borderRadius: '0.25rem' }} />
+                                            )}
+
+                                            {file.type.startsWith('audio') && (
+                                                <audio controls style={{ width: '100%' }}>
+                                                    <source src={file.blobUrl} type={file.type} />
+                                                    Your browser does not support audio tag.
+                                                </audio>
                                             )}
 
                                             {file.type.startsWith('text') && (
-                                                <pre style={{ fontSize: '0.75rem', fontFamily: 'monospace', background: 'rgba(0,0,0,0.5)', padding: '0.5rem', borderRadius: '0.25rem', whiteSpace: 'pre-wrap', color: '#4ade80' }}>
-                                                    {atob(file.content)}
+                                                <pre style={{ fontSize: '0.75rem', fontFamily: 'monospace', background: 'rgba(0,0,0,0.5)', padding: '0.5rem', borderRadius: '0.25rem', whiteSpace: 'pre-wrap', color: '#4ade80', overflowX: 'auto' }}>
+                                                    {decodeBase64UTF8(file.content)}
                                                 </pre>
+                                            )}
+
+                                            {!file.type.startsWith('video') && !file.type.startsWith('image') && !file.type.startsWith('audio') && !file.type.startsWith('text') && (
+                                                <div style={{ padding: '1rem', background: 'rgba(0,0,0,0.2)', borderRadius: '0.5rem', textAlign: 'center' }}>
+                                                    <FileText size={32} color="#94a3b8" style={{ marginBottom: '0.5rem' }} />
+                                                    <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Secure Binary File ({file.type})</p>
+                                                    <a
+                                                        href={file.blobUrl}
+                                                        download={file.filename}
+                                                        className="btn-small"
+                                                        style={{ display: 'inline-block', marginTop: '0.5rem', textDecoration: 'none' }}
+                                                    >
+                                                        Download Decrypted File
+                                                    </a>
+                                                </div>
                                             )}
                                         </motion.div>
                                     ))}

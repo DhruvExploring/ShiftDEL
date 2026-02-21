@@ -5,9 +5,14 @@ import base64
 import random
 import uuid
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
 import numpy as np
 import cv2
 from backend.services.face_logic import verify_face, set_reference_image, FACE_LIB_AVAILABLE
+from backend.core.ephemeral_crypto import EphemeralCrypto
+from backend.services.relay_client import EphemeralRelayClient
+import asyncio
+from datetime import datetime, timedelta
 
 # A fixed master key for encrypting the vault's metadata key. 
 # In a real scenario, this might be derived from a password or hardware token.
@@ -36,175 +41,182 @@ def secure_delete(path):
     except Exception as e:
         print(f"Error during secure delete of {path}: {e}")
 
-def create_vault(target_dir, reference_img_bytes, secret_files):
+async def create_vault(target_dir, reference_img_bytes, secret_files):
     """
-    Creates a secure vault in the target_dir offloading the files.
-    secret_files: List of {"filename": str, "content": bytes}
+    Creates a secure vault with Ephemeral Metadata Pipeline.
     """
     if not os.path.exists(target_dir):
         return False, "Target directory does not exist."
 
     vault_path = os.path.join(target_dir, "SecureVault")
     if os.path.exists(vault_path):
-        return False, "Vault already exists in this directory."
+        return False, "Vault already exists."
     
     os.makedirs(vault_path)
 
-    # 1. Extract Face Encodings from Reference
-    ref_encoding, error = set_reference_image(reference_img_bytes)
+    face_encoding, error = set_reference_image(reference_img_bytes)
     if error:
         shutil.rmtree(vault_path)
         return False, error
 
-    # 2. Generate Vault Key (AES)
-    vault_key = Fernet.generate_key()
-    cipher = Fernet(vault_key)
-
-    # 3. Encrypt Files
-    encrypted_file_paths = []
+    # 2. Ephemeral Session Creation
+    session_id = str(uuid.uuid4())
+    session_key = EphemeralCrypto.generate_session_key()
+    
+    # 3. Payload Encryption (AES-256-GCM)
+    encrypted_file_info = []
     for file_obj in secret_files:
         filename = file_obj['filename']
         content = file_obj['content']
-        encrypted_content = cipher.encrypt(content)
+        content_type = file_obj.get('content_type', 'application/octet-stream')
         
-        # Save payload
+        # Encrypt with GCM
+        encrypted_content = EphemeralCrypto.encrypt_payload(session_key, content)
+        
         safe_filename = base64.urlsafe_b64encode(filename.encode()).decode() + ".enc"
         file_path = os.path.join(vault_path, safe_filename)
         with open(file_path, "wb") as f:
             f.write(encrypted_content)
-        encrypted_file_paths.append(safe_filename)
+            
+        encrypted_file_info.append({
+            "enc_filename": safe_filename,
+            "orig_filename": filename,
+            "content_type": content_type
+        })
 
-    # 4. Encrypt the Vault Key using Master Key
-    # Ideally we'd use the face encoding to derive the key, but fuzzy extraction is hard.
-    # We will just gate the key release with face check.
-    # We store the Vault Key encrypted by a hardcoded master key, 
-    # so only THIS app can open it, and only if face matches.
-    master_cipher = Fernet(VALID_MASTER_KEY)
-    encrypted_vault_key = master_cipher.encrypt(vault_key).decode()
+    # 4. RSA Metadata Wrapping
+    private_key, public_key = EphemeralCrypto.generate_rsa_keypair()
+    
+    # Save Private Key Locally (This is the receiver's key in a real pair)
+    # For this demo, we store it in the app's secure storage area, not on USB.
+    priv_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+    with open(os.path.join(os.path.expanduser("~"), f".shiftdel_{session_id}.pem"), "wb") as f:
+        f.write(priv_key_pem)
 
-    # 5. Create Metadata
     metadata = {
-        "reference_encoding": ref_encoding,
-        "encrypted_vault_key": encrypted_vault_key,
-        "files": encrypted_file_paths,
-        "failure_count": 0
+        "session_key": base64.b64encode(session_key).decode(),
+        "face_encoding": face_encoding,
+        "files": encrypted_file_info,
+        "expiry": (datetime.utcnow() + timedelta(minutes=10)).isoformat()
     }
+    
+    wrapped_metadata = EphemeralCrypto.wrap_metadata_hybrid(public_key, metadata)
 
-    with open(os.path.join(vault_path, "metadata.json"), "w") as f:
-        json.dump(metadata, f)
+    # 5. Push to Relay
+    relay = EphemeralRelayClient()
+    success = await relay.create_session(session_id, wrapped_metadata)
+    
+    if not success:
+        shutil.rmtree(vault_path)
+        return False, "Failed to connect to Security Relay."
 
-    return True, f"Vault created at {vault_path}"
+    # 6. Save Minimal Link on USB
+    manifest = {
+        "session_id": session_id,
+        "note": "Sensitive metadata moved to Ephemeral Relay."
+    }
+    with open(os.path.join(vault_path, "session.json"), "w") as f:
+        json.dump(manifest, f)
 
-def unlock_vault(source_dir, live_img_bytes):
+    return True, f"Ephemeral Vault created at {vault_path} (Session: {session_id})"
+
+def destroy_local_vault(vault_path, session_id):
     """
-    Verifies face and unlocks the vault.
-    Returns: (Success, ListOfFiles or Message)
-    ListOfFiles: [{"filename": str, "content": b64_str, "type": mime, "url": stream_url}]
+    Overwrites and removes the local vault and private key.
+    """
+    if os.path.exists(vault_path):
+        print(f"[SECURITY] Initiating local destruction of {vault_path}...")
+        for root, dirs, files in os.walk(vault_path, topdown=False):
+            for name in files:
+                secure_delete(os.path.join(root, name))
+            for name in dirs:
+                os.rmdir(os.path.join(root, name))
+        os.rmdir(vault_path)
+    
+    priv_path = os.path.join(os.path.expanduser("~"), f".shiftdel_{session_id}.pem")
+    if os.path.exists(priv_path):
+        os.remove(priv_path)
+
+async def unlock_vault(source_dir, live_img_bytes):
+    """
+    Unlocks Ephemeral Vault by communicating with Relay.
     """
     vault_path = os.path.join(source_dir, "SecureVault")
-    meta_path = os.path.join(vault_path, "metadata.json")
+    session_manifest = os.path.join(vault_path, "session.json")
 
-    if not os.path.exists(meta_path):
-        return False, "No SecureVault found in this directory."
+    if not os.path.exists(session_manifest):
+        return False, "Invalid Ephemeral Vault (Missing session reference)."
 
-    with open(meta_path, "r") as f:
-        metadata = json.load(f)
-
-    # Check failure count
-    if metadata.get("failure_count", 0) >= 3:
-        return False, "Vault is DESTROYED due to excessive failed attempts."
-
-    # Verify Face
-    match, error_msg = verify_face(live_img_bytes, metadata["reference_encoding"])
-
-    if not match:
-        # Increment failure
-        metadata["failure_count"] = metadata.get("failure_count", 0) + 1
-        with open(meta_path, "w") as f:
-            json.dump(metadata, f)
-        
-        if metadata["failure_count"] >= 3:
-            # TRIGGER SELF DESTRUCT!!
-            for fname in metadata["files"]:
-                secure_delete(os.path.join(vault_path, fname))
-            secure_delete(meta_path)
-            # secure_delete(vault_path) # remove dir
-            return False, "Face mismatch. Vault DESTROYED."
-        
-        return False, f"Face mismatch. Attempts remaining: {3 - metadata['failure_count']}"
-
-    # If Match: Decrypt
+    with open(session_manifest, "r") as f:
+        manifest = json.load(f)
+    
+    session_id = manifest["session_id"]
+    relay = EphemeralRelayClient()
+    
+    # 1. Fetch Encrypted Metadata from Relay
+    session_data = await relay.verify_session(session_id)
+    if not session_data:
+        # DESTRUCTIVE LOGIC: Session missing = destroyed or expired.
+        destroy_local_vault(vault_path, session_id)
+        return False, "Vault destroyed due to too many failed attempts or expiry."
+    
+    # 2. Local RSA Unwrapping
     try:
-        master_cipher = Fernet(VALID_MASTER_KEY)
-        vault_key = master_cipher.decrypt(metadata["encrypted_vault_key"].encode())
-        vault_cipher = Fernet(vault_key)
+        priv_path = os.path.join(os.path.expanduser("~"), f".shiftdel_{session_id}.pem")
+        with open(priv_path, "rb") as f:
+            private_key = serialization.load_pem_private_key(f.read(), password=None)
+        
+        metadata = EphemeralCrypto.unwrap_metadata_hybrid(private_key, session_data["encrypted_metadata"])
+    except Exception as e:
+        return False, f"Integrity check failed: {str(e)}"
 
+    # 3. Robust Face Matching (Euclidean Distance)
+    is_match, face_error = verify_face(live_img_bytes, metadata["face_encoding"])
+    
+    if not is_match:
+        # Tell relay to increment fail
+        success, fail_info = await relay.release_key(session_id, "invalid_token_to_trigger_fail")
+        if fail_info.get("fails", 0) >= 3:
+            destroy_local_vault(vault_path, session_id)
+            return False, "Maximum attempts reached. VAULT DESTROYED."
+        return False, face_error or f"Biometric mismatch. ({fail_info.get('fails',0)}/3)"
+
+    # 4. Key Release
+    success, release_data = await relay.release_key(session_id, session_data["release_token"])
+    if not success:
+        if release_data.get("fails", 0) >= 3:
+            destroy_local_vault(vault_path, session_id)
+            return False, "Relay denied key. VAULT DESTROYED."
+        return False, f"Relay denied key release. ({release_data.get('fails',0)}/3)"
+
+    # 5. Decryption (AES-256-GCM)
+    try:
+        session_key = base64.b64decode(metadata["session_key"])
         decrypted_files = []
-        for enc_fname in metadata["files"]:
+        for file_info in metadata["files"]:
+            enc_fname = file_info["enc_filename"]
             enc_path = os.path.join(vault_path, enc_fname)
-            if not os.path.exists(enc_path):
-                continue
-            
             with open(enc_path, "rb") as f:
-                enc_data = f.read()
+                payload = f.read()
             
-            # Decrypt file content
-            file_content = vault_cipher.decrypt(enc_data)
+            raw_content = EphemeralCrypto.decrypt_payload(session_key, payload)
             
-            # Restore filename (base64 decode the filename part minus .enc)
-            original_b64 = enc_fname.replace(".enc", "")
-            original_filename = base64.urlsafe_b64decode(original_b64).decode()
-            
-            # Determine type
-            mime_type = "application/octet-stream"
-            is_video = False
-            
-            # Browser Compatibility: Force .mov -> video/mp4
-            if original_filename.lower().endswith(".mp4"): 
-                mime_type = "video/mp4"
-                is_video = True
-            elif original_filename.lower().endswith(".mov"): 
-                mime_type = "video/mp4" # LIE to browser to force H.264 attempt
-                is_video = True
-            elif original_filename.lower().endswith(".jpg") or original_filename.lower().endswith(".jpeg"): 
-                mime_type = "image/jpeg"
-            elif original_filename.lower().endswith(".png"):
-                mime_type = "image/png"
-            elif original_filename.lower().endswith(".txt"): 
-                mime_type = "text/plain"
+            decrypted_files.append({
+                "filename": file_info["orig_filename"],
+                "content": base64.b64encode(raw_content).decode(),
+                "type": file_info["content_type"]
+            })
 
-            file_obj = {
-                "filename": original_filename,
-                "type": mime_type,
-            }
-
-            if is_video:
-                # Video Streaming Strategy: Write to temp_stream
-                # We use a UUID to prevent collisions
-                file_uuid = str(uuid.uuid4())
-                # Force .mp4 extension so StaticFiles serves correct content-type header
-                temp_filename = f"{file_uuid}.mp4" 
-                temp_path = os.path.join("backend/temp_stream", temp_filename)
-                
-                with open(temp_path, "wb") as f:
-                    f.write(file_content)
-                
-                # Stream URL
-                file_obj["url"] = f"http://localhost:8000/api/stream/{temp_filename}"
-                file_obj["content"] = "" # Empty content to save bandwidth
-            else:
-                # Standard Base64 for images/text
-                b64_content = base64.b64encode(file_content).decode()
-                file_obj["content"] = b64_content
-
-            decrypted_files.append(file_obj)
-
-        # Reset failure count on success
-        metadata["failure_count"] = 0
-        with open(meta_path, "w") as f:
-            json.dump(metadata, f)
-
+        # 6. Cleanup & Delivery Sync
+        await relay.mark_delivered(session_id)
+        os.remove(priv_path) # Wipe local private key
+        
+        # USB Wipe Logic (Optional based on user preference, here we mark as delivered)
         return True, decrypted_files
 
     except Exception as e:
-        return False, f"Decryption error: {str(e)}"
+        return False, f"Pipeline Error: {str(e)}"
